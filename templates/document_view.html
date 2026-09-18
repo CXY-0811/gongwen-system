@@ -1,1 +1,14 @@
-{% extends 'base.html' %}{% block content %}<div class="toolbar"><a class="btn" href="{{url_for('document_edit',did=doc.id)}}">編輯</a><a class="btn primary" href="{{url_for('word',did=doc.id)}}">另存 Word</a><form method="post" action="{{url_for('document_delete',did=doc.id)}}" onsubmit="return confirm('確定刪除？')"><button class="btn danger">刪除</button></form></div><div class="paper"><div class="binding">裝<br>訂<br>線</div><h1>{{doc.office}} 函</h1><div class="meta"><p>受文者：{{doc.recipient}}</p><p>發文日期：中華民國 {{doc.year}} 年 {{doc.doc_date[5:7]}} 月 {{doc.doc_date[8:10]}} 日</p><p>發文字號：{{no}}</p><p>速別：{{doc.speed}}</p><p>密等及解密條件：{{doc.security}}</p><p>附件：{{doc.attachment}}</p></div><p class="topic"><b>主旨：</b>{{doc.subject}}</p><div class="body"><b>說明：</b>{% for x in (doc.explanation or '').splitlines() %}{% if x.strip() %}<p>{{x}}</p>{% endif %}{% endfor %}</div><div class="footer"><p>正本：{{doc.originals}}</p><p>副本：{{doc.copies}}</p><p>聯絡住址：{{doc.address}}</p><p>電話：{{doc.phone}}　傳真：{{doc.fax}}</p><p>E-Mail：{{doc.email}}</p><p>連絡人：{{doc.contact}}</p></div></div>{% endblock %}
+{% extends 'base.html' %}{% block content %}
+<div class="toolbar"><a class="btn" href="{{url_for('document_edit',did=doc.id)}}">編輯</a><a class="btn primary" href="{{url_for('word',did=doc.id)}}">另存 Word</a><form method="post" action="{{url_for('document_delete',did=doc.id)}}" onsubmit="return confirm('確定刪除？')"><button class="btn danger">刪除</button></form></div>
+<div class="paper official">
+  <div class="binding-line"><span>裝</span><span>訂</span><span>線</span></div>
+  <h1>{{doc.office}}　函</h1>
+  <div class="contact-box"><div>聯絡住址：{{doc.address}}</div><div>電話：{{doc.phone}}　傳真：{{doc.fax}}</div><div>E-Mail：{{doc.email}}</div><div>連絡人：{{doc.contact}}</div></div>
+  <div class="official-main">
+    <p class="recipient">受文者：{{doc.recipient}}</p>
+    <div class="meta"><p>發文日期：中華民國 {{doc.doc_date[0:4]|int - 1911}} 年 {{doc.doc_date[5:7]}} 月 {{doc.doc_date[8:10]}} 日</p><p>發文字號：{{no}}</p><p>速別：{{doc.speed}}</p><p>密等及解密條件：{{doc.security}}</p><p>附件：{{doc.attachment}}</p></div>
+    <p class="topic"><span>主旨：</span>{{doc.subject}}</p>
+    <div class="explain"><span>說明：</span>{% for x in (doc.explanation or '').splitlines() %}{% if x.strip() %}<p>{{x}}</p>{% endif %}{% endfor %}</div>
+    <div class="copies"><p>正本：{{doc.originals}}</p><p>副本：{{doc.copies}}</p></div>
+  </div>
+</div>{% endblock %}
