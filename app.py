@@ -16,9 +16,11 @@ def conn():
 def init_db():
  c=conn(); c.executescript('''
  CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,office TEXT NOT NULL,year INTEGER NOT NULL,prefix TEXT NOT NULL,default_recipient TEXT,speed TEXT,security TEXT,address TEXT,phone TEXT,fax TEXT,email TEXT,contact TEXT,created_at TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY AUTOINCREMENT,project_id INTEGER NOT NULL,doc_date TEXT NOT NULL,serial TEXT NOT NULL,recipient TEXT,speed TEXT,security TEXT,attachment TEXT,subject TEXT,explanation TEXT,originals TEXT,copies TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
+ CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY AUTOINCREMENT,project_id INTEGER NOT NULL,doc_date TEXT NOT NULL,serial TEXT NOT NULL,recipient TEXT,second_recipient TEXT,speed TEXT,security TEXT,attachment TEXT,subject TEXT,explanation TEXT,originals TEXT,copies TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
  CREATE TABLE IF NOT EXISTS templates(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,subject TEXT,explanation TEXT,attachment TEXT,originals TEXT,copies TEXT,quick_enabled INTEGER DEFAULT 0,quick_buttons TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
  ''')
+ cols=[r[1] for r in c.execute('PRAGMA table_info(documents)').fetchall()]
+ if 'second_recipient' not in cols: c.execute('ALTER TABLE documents ADD COLUMN second_recipient TEXT')
  if c.execute('SELECT COUNT(*) FROM projects').fetchone()[0]==0:
   c.execute('INSERT INTO projects(name,office,year,prefix,default_recipient,speed,security,address,phone,fax,email,contact,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(SAMPLE['name'],SAMPLE['office'],SAMPLE['year'],SAMPLE['prefix'],SAMPLE['recipient'],SAMPLE['speed'],SAMPLE['security'],SAMPLE['address'],SAMPLE['phone'],SAMPLE['fax'],SAMPLE['email'],SAMPLE['contact'],datetime.now().isoformat(timespec='seconds')))
  if c.execute('SELECT COUNT(*) FROM templates').fetchone()[0]==0:
@@ -105,10 +107,10 @@ def document_edit(did):
  if request.method=='POST':return save_document(did)
  return render_template('document_form.html',project=get_project(d['project_id']),projects=all_projects(),doc=d,serial=d['serial'],doc_date=d['doc_date'],template=None,pre={})
 def save_document(did=None):
- f=request.form;pid=int(f['project_id']);d=f['doc_date'];serial=f.get('serial') or next_serial(pid,d);now=datetime.now().isoformat(timespec='seconds');vals=(pid,d,serial,f.get('recipient',''),f.get('speed','普通件'),f.get('security','普通'),f.get('attachment',''),f.get('subject',''),f.get('explanation',''),f.get('originals',''),f.get('copies',''))
+ f=request.form;pid=int(f['project_id']);d=f['doc_date'];serial=f.get('serial') or next_serial(pid,d);now=datetime.now().isoformat(timespec='seconds');vals=(pid,d,serial,f.get('recipient',''),f.get('second_recipient',''),f.get('speed','普通件'),f.get('security','普通'),f.get('attachment',''),f.get('subject',''),f.get('explanation',''),f.get('originals',''),f.get('copies',''))
  c=conn()
- if did:c.execute('UPDATE documents SET project_id=?,doc_date=?,serial=?,recipient=?,speed=?,security=?,attachment=?,subject=?,explanation=?,originals=?,copies=?,updated_at=? WHERE id=?',vals+(now,did));new_id=did
- else:cur=c.execute('INSERT INTO documents(project_id,doc_date,serial,recipient,speed,security,attachment,subject,explanation,originals,copies,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',vals+(now,now));new_id=cur.lastrowid
+ if did:c.execute('UPDATE documents SET project_id=?,doc_date=?,serial=?,recipient=?,second_recipient=?,speed=?,security=?,attachment=?,subject=?,explanation=?,originals=?,copies=?,updated_at=? WHERE id=?',vals+(now,did));new_id=did
+ else:cur=c.execute('INSERT INTO documents(project_id,doc_date,serial,recipient,second_recipient,speed,security,attachment,subject,explanation,originals,copies,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',vals+(now,now));new_id=cur.lastrowid
  c.commit();c.close();flash('公文已儲存');return redirect(url_for('document_view',did=new_id))
 @app.post('/documents/save')
 def document_save():return save_document()
@@ -126,41 +128,88 @@ def document_clone(did):
 def document_delete(did):
  c=conn();d=c.execute('SELECT project_id FROM documents WHERE id=?',(did,)).fetchone();c.execute('DELETE FROM documents WHERE id=?',(did,));c.commit();c.close();flash('公文已刪除');return redirect(url_for('project_view',pid=d['project_id']) if d else url_for('index'))
 
+def load_full_doc(did):
+ c=conn(); d=c.execute('SELECT d.*,p.name project_name,p.office,p.prefix,p.year,p.address,p.phone,p.fax,p.email,p.contact FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?',(did,)).fetchone(); c.close(); return d
+
+def recipient_variants(d,mode):
+ primary=d['recipient'] or ''; secondary=d['second_recipient'] or ''
+ if mode=='secondary' and secondary: return [secondary]
+ if mode=='all' and secondary: return [primary,secondary]
+ return [primary]
+
+def add_word_page(doc,d,recipient,first=True):
+ from docx.oxml.ns import qn
+ if not first: doc.add_page_break()
+ normal=doc.styles['Normal']; normal.font.name='標楷體'; normal._element.rPr.rFonts.set(qn('w:eastAsia'),'標楷體'); normal.font.size=Pt(14); normal.paragraph_format.space_after=Pt(0); normal.paragraph_format.line_spacing=1.35
+ def sr(run,size=14,bold=False):
+  run.font.name='標楷體'; run._element.rPr.rFonts.set(qn('w:eastAsia'),'標楷體'); run.font.size=Pt(size); run.bold=bold
+ def para(text='',size=14,bold=False,align=None):
+  p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(0)
+  if align is not None:p.alignment=align
+  sr(p.add_run(text),size,bold); return p
+ def field(label,value,size=12):
+  p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(0); p.paragraph_format.line_spacing=1.25; sr(p.add_run(label),size); sr(p.add_run(str(value or '')),size)
+ para(f'{d["office"]}　函',20,True,WD_ALIGN_PARAGRAPH.CENTER)
+ t=doc.add_table(rows=1,cols=2); t.alignment=WD_TABLE_ALIGNMENT.RIGHT; t.autofit=False; t.columns[0].width=Mm(68); t.columns[1].width=Mm(92)
+ right=t.cell(0,1); right.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.TOP; right.text=''
+ for i,x in enumerate([f'聯絡住址：{d["address"] or ""}',f'電話：{d["phone"] or ""}　傳真：{d["fax"] or ""}',f'E-Mail：{d["email"] or ""}',f'連絡人：{d["contact"] or ""}']):
+  pp=right.paragraphs[0] if i==0 else right.add_paragraph(); pp.paragraph_format.space_after=Pt(0); sr(pp.add_run(x),10)
+ field('受文者：',recipient,16)
+ dt=datetime.strptime(d['doc_date'],'%Y-%m-%d'); field('發文日期：',f'中華民國 {dt.year-1911} 年 {dt.month:02d} 月 {dt.day:02d} 日'); field('發文字號：',doc_no(d,d['doc_date'],d['serial'])); field('速別：',d['speed']); field('密等及解密條件：',d['security']); field('附件：',d['attachment'])
+ p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(0); sr(p.add_run('主旨：'),14,False); sr(p.add_run(d['subject'] or ''),14,False)
+ p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(0); sr(p.add_run('說明：'),14,False)
+ for x in [x.strip() for x in (d['explanation'] or '').splitlines() if x.strip()]:
+  pp=doc.add_paragraph(); pp.paragraph_format.left_indent=Mm(8); pp.paragraph_format.space_after=Pt(0); sr(pp.add_run(x),14,False)
+ field('正本：',d['originals'],12); field('副本：',d['copies'],12)
+
 @app.get('/documents/<int:did>/word')
 def word(did):
- from docx.oxml import OxmlElement, parse_xml
- from docx.oxml.ns import qn
- c=conn();d=c.execute('SELECT d.*,p.name project_name,p.office,p.prefix,p.year,p.address,p.phone,p.fax,p.email,p.contact FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.id=?',(did,)).fetchone();c.close()
+ from docx.oxml import parse_xml
+ d=load_full_doc(did)
  if not d:abort(404)
- doc=Document();sec=doc.sections[0];sec.top_margin=Mm(20);sec.bottom_margin=Mm(20);sec.left_margin=Mm(25);sec.right_margin=Mm(20)
- normal=doc.styles['Normal'];normal.font.name='標楷體';normal._element.rPr.rFonts.set(qn('w:eastAsia'),'標楷體');normal.font.size=Pt(14);normal.paragraph_format.space_after=Pt(0);normal.paragraph_format.line_spacing=1.35
- def sr(run,size=14,bold=False):run.font.name='標楷體';run._element.rPr.rFonts.set(qn('w:eastAsia'),'標楷體');run.font.size=Pt(size);run.bold=bold
- def para(text='',size=14,bold=False,align=None,before=0,after=0):
-  p=doc.add_paragraph();p.paragraph_format.space_before=Pt(before);p.paragraph_format.space_after=Pt(after)
-  if align is not None:p.alignment=align
-  sr(p.add_run(text),size,bold);return p
- def field(label,value,size=12):
-  p=doc.add_paragraph();p.paragraph_format.space_after=Pt(0);p.paragraph_format.line_spacing=1.25;sr(p.add_run(label),size);sr(p.add_run(str(value or '')),size);return p
- # 裝訂線：放在頁首的絕對定位 VML，不佔正文流
- hp=sec.header.paragraphs[0];hp.paragraph_format.space_after=Pt(0)
- vml='''<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml"><w:pict><v:shape id="BindingText" style="position:absolute;margin-left:-58pt;margin-top:165pt;width:18pt;height:150pt;z-index:1;mso-position-horizontal-relative:page;mso-position-vertical-relative:page" stroked="f" filled="f"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:rPr><w:rFonts w:eastAsia="標楷體"/><w:sz w:val="24"/></w:rPr><w:t>裝</w:t><w:br/><w:br/><w:t>訂</w:t><w:br/><w:br/><w:t>線</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape><v:line from="-48pt,120pt" to="-48pt,155pt" style="position:absolute;z-index:1;mso-position-horizontal-relative:page;mso-position-vertical-relative:page" strokecolor="#777777" strokeweight="0.5pt"/><v:line from="-48pt,330pt" to="-48pt,430pt" style="position:absolute;z-index:1;mso-position-horizontal-relative:page;mso-position-vertical-relative:page" strokecolor="#777777" strokeweight="0.5pt"/></w:pict></w:r>'''
- try:hp._p.append(parse_xml(vml))
- except Exception:pass
- para(f'{d["office"]}　函',20,True,WD_ALIGN_PARAGRAPH.CENTER,after=8)
- t=doc.add_table(rows=1,cols=2);t.alignment=WD_TABLE_ALIGNMENT.RIGHT;t.autofit=False;t.columns[0].width=Mm(68);t.columns[1].width=Mm(92)
- for cell in t.rows[0].cells:
-  tcPr=cell._tc.get_or_add_tcPr();borders=OxmlElement('w:tcBorders');tcPr.append(borders)
- right=t.cell(0,1);right.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.TOP;right.text=''
- for i,x in enumerate([f'聯絡住址：{d["address"] or ""}',f'電話：{d["phone"] or ""}　傳真：{d["fax"] or ""}',f'E-Mail：{d["email"] or ""}',f'連絡人：{d["contact"] or ""}']):
-  pp=right.paragraphs[0] if i==0 else right.add_paragraph();pp.paragraph_format.space_after=Pt(0);pp.paragraph_format.line_spacing=1.05;sr(pp.add_run(x),10)
- para('',before=6,after=2);field('受文者：',d['recipient'],16)
- dt=datetime.strptime(d['doc_date'],'%Y-%m-%d');field('發文日期：',f'中華民國 {dt.year-1911} 年 {dt.month:02d} 月 {dt.day:02d} 日');field('發文字號：',doc_no(d,d['doc_date'],d['serial']));field('速別：',d['speed']);field('密等及解密條件：',d['security']);field('附件：',d['attachment'])
- p=doc.add_paragraph();p.paragraph_format.space_before=Pt(4);p.paragraph_format.space_after=Pt(0);p.paragraph_format.line_spacing=1.35;sr(p.add_run('主旨：'),14,False);sr(p.add_run(d['subject'] or ''),14,False)
- p=doc.add_paragraph();p.paragraph_format.space_after=Pt(0);sr(p.add_run('說明：'),14,False)
- for x in [x.strip() for x in (d['explanation'] or '').splitlines() if x.strip()]:
-  pp=doc.add_paragraph();pp.paragraph_format.left_indent=Mm(8);pp.paragraph_format.space_after=Pt(0);pp.paragraph_format.line_spacing=1.35;sr(pp.add_run(x),14,False)
- para('',before=4,after=2);field('正本：',d['originals']);field('副本：',d['copies'])
- bio=io.BytesIO();doc.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f'{doc_no(d,d["doc_date"],d["serial"]).replace(" ","")}-公文.docx',mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+ mode=request.args.get('mode','primary'); doc=Document(); sec=doc.sections[0]; sec.top_margin=Mm(20); sec.bottom_margin=Mm(20); sec.left_margin=Mm(28); sec.right_margin=Mm(20)
+ hp=sec.header.paragraphs[0]
+ vml='<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml"><w:pict><v:shape id="BindingText" style="position:absolute;margin-left:-48pt;margin-top:180pt;width:18pt;height:150pt;z-index:1;mso-position-horizontal-relative:margin;mso-position-vertical-relative:page" stroked="f" filled="f"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:rPr><w:rFonts w:eastAsia="標楷體"/><w:sz w:val="24"/></w:rPr><w:t>裝</w:t><w:br/><w:br/><w:t>訂</w:t><w:br/><w:br/><w:t>線</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>'
+ try: hp._p.append(parse_xml(vml))
+ except Exception: pass
+ for i,r in enumerate(recipient_variants(d,mode)): add_word_page(doc,d,r,i==0)
+ bio=io.BytesIO(); doc.save(bio); bio.seek(0); suffix='全部受文者' if mode=='all' else ('第二受文者' if mode=='secondary' else '主要受文者')
+ return send_file(bio,as_attachment=True,download_name=f'{doc_no(d,d["doc_date"],d["serial"]).replace(" ","")}-{suffix}.docx',mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+
+@app.get('/documents/<int:did>/pdf')
+def pdf(did):
+ d=load_full_doc(did)
+ if not d:abort(404)
+ from reportlab.lib.pagesizes import A4
+ from reportlab.pdfbase import pdfmetrics
+ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+ from reportlab.pdfgen import canvas
+ from reportlab.lib.units import mm
+ try: pdfmetrics.registerFont(UnicodeCIDFont('MSung-Light'))
+ except Exception: pass
+ font='MSung-Light'; bio=io.BytesIO(); c=canvas.Canvas(bio,pagesize=A4); W,H=A4
+ def wrap(text,n):
+  text=str(text or ''); return [text[i:i+n] for i in range(0,len(text),n)] or ['']
+ def draw_page(recipient):
+  x=12*mm; c.setFont(font,12); c.line(x,238*mm,x,270*mm); c.drawCentredString(x,226*mm,'裝'); c.drawCentredString(x,213*mm,'訂'); c.drawCentredString(x,200*mm,'線'); c.line(x,155*mm,x,190*mm)
+  y=277*mm; c.setFont(font,20); c.drawCentredString(W/2,y,f'{d["office"]}　函'); y-=16*mm; c.setFont(font,10)
+  for txt in [f'聯絡住址：{d["address"] or ""}',f'電話：{d["phone"] or ""}　傳真：{d["fax"] or ""}',f'E-Mail：{d["email"] or ""}',f'連絡人：{d["contact"] or ""}']:
+   c.drawString(108*mm,y,txt); y-=5*mm
+  y-=5*mm; c.setFont(font,16); c.drawString(27*mm,y,f'受文者：{recipient}'); y-=9*mm; c.setFont(font,12); dt=datetime.strptime(d['doc_date'],'%Y-%m-%d')
+  for label,val in [('發文日期：',f'中華民國 {dt.year-1911} 年 {dt.month:02d} 月 {dt.day:02d} 日'),('發文字號：',doc_no(d,d['doc_date'],d['serial'])),('速別：',d['speed']),('密等及解密條件：',d['security']),('附件：',d['attachment'])]: c.drawString(27*mm,y,label+str(val or '')); y-=6.5*mm
+  c.setFont(font,14); y-=2*mm
+  for line in wrap('主旨：'+(d['subject'] or ''),31): c.drawString(27*mm,y,line); y-=7.5*mm
+  c.drawString(27*mm,y,'說明：'); y-=7.5*mm
+  for raw in (d['explanation'] or '').splitlines():
+   for line in wrap(raw,31): c.drawString(35*mm,y,line); y-=7.5*mm
+  y-=2*mm; c.setFont(font,12)
+  for line in wrap('正本：'+(d['originals'] or ''),43): c.drawString(27*mm,y,line); y-=6.5*mm
+  for line in wrap('副本：'+(d['copies'] or ''),43): c.drawString(27*mm,y,line); y-=6.5*mm
+  c.showPage()
+ mode=request.args.get('mode','primary')
+ for r in recipient_variants(d,mode): draw_page(r)
+ c.save(); bio.seek(0); suffix='全部受文者' if mode=='all' else ('第二受文者' if mode=='secondary' else '主要受文者')
+ return send_file(bio,as_attachment=True,download_name=f'{doc_no(d,d["doc_date"],d["serial"]).replace(" ","")}-{suffix}.pdf',mimetype='application/pdf')
 
 with app.app_context():init_db()
 if __name__=='__main__':app.run(host='0.0.0.0',port=int(os.getenv('PORT',5000)),debug=os.getenv('FLASK_DEBUG')=='1')

@@ -1,11 +1,11 @@
 {% extends 'base.html' %}{% block content %}
-<div class="toolbar"><a class="btn" href="{{url_for('document_edit',did=doc.id)}}">編輯</a><a class="btn primary" href="{{url_for('word',did=doc.id)}}">另存 Word</a><form method="post" action="{{url_for('document_delete',did=doc.id)}}" onsubmit="return confirm('確定刪除？')"><button class="btn danger">刪除</button></form></div>
+<div class="toolbar"><a class="btn" href="{{url_for('document_edit',did=doc.id)}}">編輯</a><a class="btn primary" href="{{url_for('word',did=doc.id,mode='primary')}}">Word－主要受文者</a><a class="btn" href="{{url_for('pdf',did=doc.id,mode='primary')}}">PDF－主要受文者</a>{% if doc.second_recipient %}<a class="btn" href="{{url_for('word',did=doc.id,mode='secondary')}}">Word－第二受文者</a><a class="btn" href="{{url_for('pdf',did=doc.id,mode='secondary')}}">PDF－第二受文者</a><a class="btn primary" href="{{url_for('word',did=doc.id,mode='all')}}">Word－全部合併</a><a class="btn primary" href="{{url_for('pdf',did=doc.id,mode='all')}}">PDF－全部合併</a>{% endif %}<form method="post" action="{{url_for('document_delete',did=doc.id)}}" onsubmit="return confirm('確定刪除？')"><button class="btn danger">刪除</button></form></div>
 <div class="paper official">
   <div class="binding-line"><span>裝</span><span>訂</span><span>線</span></div>
   <h1>{{doc.office}}　函</h1>
   <div class="contact-box"><div>聯絡住址：{{doc.address}}</div><div>電話：{{doc.phone}}　傳真：{{doc.fax}}</div><div>E-Mail：{{doc.email}}</div><div>連絡人：{{doc.contact}}</div></div>
   <div class="official-main">
-    <p class="recipient">受文者：{{doc.recipient}}</p>
+    <p class="recipient">受文者：{{doc.recipient}}</p>{% if doc.second_recipient %}<p class="secondary-note">第二受文者：{{doc.second_recipient}}（下載時可個別或合併產生）</p>{% endif %}
     <div class="meta"><p>發文日期：中華民國 {{doc.doc_date[0:4]|int - 1911}} 年 {{doc.doc_date[5:7]}} 月 {{doc.doc_date[8:10]}} 日</p><p>發文字號：{{no}}</p><p>速別：{{doc.speed}}</p><p>密等及解密條件：{{doc.security}}</p><p>附件：{{doc.attachment}}</p></div>
     <p class="topic"><span>主旨：</span>{{doc.subject}}</p>
     <div class="explain"><span>說明：</span>{% for x in (doc.explanation or '').splitlines() %}{% if x.strip() %}<p>{{x}}</p>{% endif %}{% endfor %}</div>
